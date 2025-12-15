@@ -10,25 +10,161 @@ La infraestructura se despliega utilizando Vagrant , con máquinas basadas en De
 
 ## 2. Arquitectura de la infraestructura
 
-La infraestructura está dividida en cuatro capas claramente diferenciadas, comunicadas mediante **redes privadas independientes**, cada una con su propio rango de direcciones IP.
+La infraestructura está dividida en cuatro capas claramente diferenciadas, comunicadas mediante redes privadas independientes, cada una con su propio rango de direcciones IP.
 
 ---
+## 3. Requisitos para la practica
+- Vagrant 
+- VirtualBox
+  
+**IMPORTANTE** hay que ejecutar en orden las maquinas para que funcionen, ya que los sript de aprovisionamiento depende de algunos servidores(WEB y NFS)
 
-## 3. Esquema de red y rangos de IP
+- vagrant up serverdatosAlejandro     
+
+- vagrant up proxyBBDDAlejandro    
+
+- vagrant up serverNFSAlejandro    
+
+- vagrant up serverweb1Alejandro   
+
+- vagrant up serverweb2Alejandro  
+
+- vagrant up balanceadorAlejandro       
+## 4. Esquema de red y rangos de IP:
+
+
 
 | Red | Rango IP | Uso |
 |----|---------|-----|
 | Acceso público | 192.168.10.0/24 | Acceso cliente al balanceador |
 | Red Backend | 192.168.2.0/24 | Balanceador ↔ Servidores Web |
 | Red Aplicación | 192.168.3.0/24 | Servidores Web ↔ NFS  |
-| Red Lógica Aplicación-BD | 192.168.4.0/24 | NFS  ↔ Proxy BD|
+| Red Proxy-BD | 192.168.4.0/24 | NFS  ↔ Proxy BD|
 | Red Base de Datos | 192.168.5.0/24 | Proxy BD ↔ MariaDB |
 
 Las capas 2, 3 y 4 no están expuestas a red pública.
 
 ---
 
-## 4. Capa 1 – Balanceador de carga (red pública)
+## 5. Fichero VagrantFile
+
+Fichero para la configuración de las maquinas
+```bash
+
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "debian/bookworm64"
+  
+  # Configuracion comun
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = "512"
+    vb.cpus = 1
+  end
+
+
+  # CAPA 1: Balanceador
+
+  config.vm.define "balanceadorAlejandro" do |balancer|
+    balancer.vm.hostname = "balanceadorAlejandro"
+    # Interfaz hacia Internet/Cliente (DMZ)
+    balancer.vm.network "private_network", ip: "192.168.10.10"
+    # Interfaz hacia Backend
+    balancer.vm.network "private_network", ip: "192.168.2.10"
+    balancer.vm.network "forwarded_port", guest: 80, host: 8080
+    balancer.vm.provision "shell", path: "provision/balanceador.sh"
+    balancer.vm.provider "virtualbox" do |vb|
+      vb.name = "balanceadorAlejandro"
+    end
+  end
+
+  
+  # CAPA 2: Servidor Web 1
+  # Conexion con el balanceador 192.168.2.X
+  # IP servidore webs 192.168.3.X
+  
+  config.vm.define "serverweb1Alejandro" do |web1|
+    web1.vm.hostname = "serverweb1Alejandro"
+    # Interfaz hacia Balanceador
+    web1.vm.network "private_network", ip: "192.168.2.21"
+    # Interfaz hacia NFS
+    web1.vm.network "private_network", ip: "192.168.3.21"
+    web1.vm.provision "shell", path: "provision/serverweb.sh"
+    web1.vm.provider "virtualbox" do |vb|
+      vb.name = "serverweb1Alejandro"
+    end
+  end
+
+
+  # CAPA 2: Servidor Web 2
+  # conexion con el balanceador 192.168.2.x
+  # IP servidore webs: 192.168.3.x 
+  
+  config.vm.define "serverweb2Alejandro" do |web2|
+    web2.vm.hostname = "serverweb2Alejandro"
+    # Interfaz hacia Balanceador
+    web2.vm.network "private_network", ip: "192.168.2.22"
+    # Interfaz hacia NFS
+    web2.vm.network "private_network", ip: "192.168.3.22"
+    web2.vm.provision "shell", path: "provision/serverweb.sh"
+    web2.vm.provider "virtualbox" do |vb|
+      vb.name = "serverweb2Alejandro"
+    end
+  end
+
+
+
+  # Conexion con el Servidor Web: 192.168.3.x
+  # IP servidor nfs: 192.168.4.x 
+ 
+  config.vm.define "serverNFSAlejandro" do |nfs|
+    nfs.vm.hostname = "serverNFSAlejandro"
+    # Interfaz hacia Servidores Web
+    nfs.vm.network "private_network", ip: "192.168.3.23"
+    # Interfaz hacia Proxy BD
+    nfs.vm.network "private_network", ip: "192.168.4.23"
+    nfs.vm.provision "shell", path: "provision/servernfs.sh"
+    nfs.vm.provider "virtualbox" do |vb|
+      vb.name = "serverNFSAlejandro"
+      vb.memory = "768"
+    end
+  end
+
+ 
+  # CAPA 3: Proxy BD
+  # Conexion con el nfs: 192.168.4.x
+  # IP Proxy BD: 192.168.5.x 
+ 
+  config.vm.define "proxyBBDDAlejandro" do |proxy|
+    proxy.vm.hostname = "proxyBBDDAlejandro"
+    # Interfaz hacia NFS/Aplicacion
+    proxy.vm.network "private_network", ip: "192.168.4.30"
+    # Interfaz hacia Base de Datos
+    proxy.vm.network "private_network", ip: "192.168.5.30"
+    proxy.vm.provision "shell", path: "provision/proxybbdd.sh"
+    proxy.vm.provider "virtualbox" do |vb|
+      vb.name = "proxyBBDDAlejandro"
+    end
+  end
+
+
+  # CAPA 4: Servidor de Base de Datos
+  # Red BBDD: 192.168.5.x
+ 
+  config.vm.define "serverdatosAlejandro" do |db|
+    db.vm.hostname = "serverdatosAlejandro"
+    # Interfaz hacia Proxy BB
+    db.vm.network "private_network", ip: "192.168.5.40"
+    db.vm.provision "shell", path: "provision/serverbbdd.sh"
+    db.vm.provider "virtualbox" do |vb|
+      vb.name = "serverdatosAlejandro"
+      vb.memory = "768"
+    end
+  end
+end
+```
+## 6. Capa 1 – Balanceador de carga (red pública)
 
 **Máquina**
 - balanceadorAlejandro
@@ -89,7 +225,7 @@ echo " Se ha hecho todo"
 
 ```
 
-## 5. Capa 2 – WEB 
+## 7. Capa 2 – WEB 
 
 ### Servidores Web
 
@@ -184,7 +320,7 @@ systemctl restart nginx
 systemctl enable nginx
 ```
 
-## 6. Servidor NFS 
+## 8. Servidor NFS 
 
 **Máquina**
 - serverNFSAlejandro
@@ -446,7 +582,7 @@ netstat -tulpn | grep 9000
 ```
 ---
 
-## 7. Capa 3 – Proxy de Base de Datos
+## 9. Capa 3 – Proxy de Base de Datos
 
 **Máquina**
 - proxyBBDDAlejandro
@@ -516,7 +652,7 @@ systemctl restart haproxy
 ```
 ---
 
-## 8. Capa 4 – Base de Datos
+## 10. Capa 4 – Base de Datos
 
 **Máquina**
 - serverdatosAlejandro
